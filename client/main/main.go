@@ -131,7 +131,7 @@ func (g *Game) DrawModeGame(screen *ebiten.Image) {
 			}
 			// 画梯子
 			lePos := g.Grid[pos]
-			if lePos != 0 {
+			if lePos >= 0 {
 				tmpRow := lePos / LineNum
 				tmpLine := lePos % LineNum
 				if tmpRow%2 == 1 {
