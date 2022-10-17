@@ -1,33 +1,16 @@
 package main
 
 import (
-	"encoding/json"
+	"Snake_Ladder_Game/server/slgmgo"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
-)
 
-//func main(){
-//	//mp := map[int]int{1:1,2:2}
-//	sl :=[]int{1,2,3}
-//	for k,v:= range sl{
-//		go func(){
-//			fmt.Println(k,v)
-//			//f(k,v)
-//		}()
-//		//fmt.Println(k,v)
-//		//go func(k,v int){
-//		//	fmt.Println(k,v)
-//		//	f(k,v)
-//		//}(k,v)
-//	}
-//	time.Sleep(time.Second)
-//}
-//
-//func f(k,v int){fmt.Println(k,v)}
+	"github.com/gin-gonic/gin"
+)
 
 const MaxCircle = 10
 
@@ -39,28 +22,24 @@ type Game struct {
 }
 
 func main() {
-	http.HandleFunc("/dice/random", HandleDiceRandom)
-	http.HandleFunc("/grid/init", HandleGridInit)
-	err := http.ListenAndServe(":8861", nil)
+	slgmgo.MongoSetUp()
+	e := gin.Default()
+	e.GET("/dice/random", HandleDiceRandom)
+	e.GET("/grid/init", HandleGridInit)
+	e.GET("/slg/replay", HandleSLGReply)
+	err := e.Run(":8861")
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func HandleDiceRandom(w http.ResponseWriter, r *http.Request) {
+func HandleDiceRandom(c *gin.Context) {
 	flag, move := DoClickDice()
 	g := Game{NowPos: coordinate, RandNum: move, Flag: flag, Grid: grid}
-	bytes, err := json.Marshal(g)
-	if err != nil {
-		return
-	}
-	_, err = io.WriteString(w, string(bytes))
-	if err != nil {
-		return
-	}
+	c.JSON(http.StatusOK, g)
 }
 
-func HandleGridInit(w http.ResponseWriter, r *http.Request) {
+func HandleGridInit(c *gin.Context) {
 	grid = []int{
 		30, -1, -1, -1, -1, 7,
 		-1, -1, -1, -1, -1, -1,
@@ -71,17 +50,29 @@ func HandleGridInit(w http.ResponseWriter, r *http.Request) {
 	}
 	coordinate = 0
 	g := Game{NowPos: coordinate, RandNum: 0, Flag: false, Grid: grid}
-	bytes, err := json.Marshal(g)
+
+	incrId, err := slgmgo.InsertReply(grid, []int{})
 	if err != nil {
 		return
 	}
-	_, err = io.WriteString(w, string(bytes))
+	usingId = incrId
+	c.JSON(http.StatusOK, g)
+}
+
+func HandleSLGReply(c *gin.Context) {
+	id, err := strconv.Atoi(c.Query("id"))
 	if err != nil {
 		return
 	}
+	res, err := slgmgo.FindOneReply(id)
+	if err != nil {
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }
 
 var (
+	usingId    = 0
 	coordinate = 0
 	grid       = []int{
 		-1, -1, -1, -1, -1, -1,
@@ -96,23 +87,29 @@ var (
 func DoClickDice() (bool, int) {
 	rand.Seed(time.Now().Unix())
 	move := rand.Intn(6-1) + 1
-	var result bool
-	result, coordinate = ChangeDiceRandomMap(move, coordinate, grid)
+	var result, isUpdate bool
+	result, coordinate, isUpdate = ChangeDiceRandomMap(move, coordinate, grid)
 	fmt.Println(result, coordinate)
+	if isUpdate {
+		err := slgmgo.FindAndUpdateReply(usingId, move)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	return result, move
 }
 
-// 是否到达终点，新的位置
-func ChangeDiceRandomMap(move, coordinate int, grid []int) (bool, int) {
+// 是否到达终点，新的位置,是否更新骰子
+func ChangeDiceRandomMap(move, coordinate int, grid []int) (bool, int, bool) {
 	// 已经在终点了
 	if coordinate == len(grid)-1 {
-		return true, coordinate
+		return true, coordinate, false
 	}
 	// 新的位置
 	newCoordinate := (move + coordinate) % len(grid)
 	// 到终点
 	if newCoordinate == len(grid)-1 {
-		return true, newCoordinate
+		return true, newCoordinate, true
 	}
 	// 异常循环计数器
 	errCount := 0
@@ -121,17 +118,17 @@ func ChangeDiceRandomMap(move, coordinate int, grid []int) (bool, int) {
 		newCoordinate = grid[newCoordinate]
 		// 超出上限，错误
 		if newCoordinate > len(grid) {
-			return true, newCoordinate
+			return true, newCoordinate, true
 		}
 		// 到终点
 		if newCoordinate == len(grid)-1 {
-			return true, newCoordinate
+			return true, newCoordinate, true
 		}
 		// 判断为到终点并抛错
 		errCount++
 		if errCount > MaxCircle {
-			return true, newCoordinate
+			return true, newCoordinate, true
 		}
 	}
-	return false, newCoordinate
+	return false, newCoordinate, true
 }
